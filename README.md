@@ -1,16 +1,16 @@
 # HALO — Deep-work OS
 
-**HALO** is a quiet instrument for intentional deep work. Plan the week as a radial halo of arcs, drop into a focus session with a synthesized ambient mixer, and watch capacity become a euro projection — entirely in the browser.
+**HALO** is a quiet instrument for intentional deep work. Plan the week as stacked hour lanes, drop into a focus session with a synthesized ambient mixer, and watch capacity become a euro projection — with optional cloud sync.
 
-Built as a portfolio product piece: custom SVG planning, Web Audio atmosphere, and a live canvas field in one composition.
+Custom SVG planning, Web Audio atmosphere, a live canvas field, and Neon Postgres accounts in one composition.
 
 ## Why it looks hard
 
 Most demos stop at CRUD lists. HALO stacks three non-trivial front-end systems:
 
-1. **Radial week planner** — custom SVG arcs, hit targets, and a utilization ring (not a table calendar)
+1. **Week runway** — seven animated day lanes with stacked deep/admin hours and a utilization meter
 2. **Focus studio** — Web Audio ambient graph (Drift / Rain / Room) with no external audio files
-3. **Live canvas visualizer** — rings and spectrum driven by analyser energy during sessions
+3. **Live canvas visualizer** — 2D waveform + pulse bars driven by analyser energy
 
 Plus EUR projection from hourly rate × booked hours, a 12-week deep-work heatmap, and durable `localStorage` state.
 
@@ -22,7 +22,8 @@ Plus EUR projection from hourly rate × booked hours, a 12-week deep-work heatma
 - Focus timer presets (25 / 50 / 90) with start, pause, complete
 - Completed sessions land hours on the selected day and feed the heatmap
 - Ambient mixer with per-layer gain and mute-all
-- Privacy-first: no accounts, no backend, data stays in `localStorage`
+- Optional accounts: create / sign in, week state syncs to Neon Postgres on Vercel
+- Still works offline in `localStorage` when signed out
 - Responsive layout for desktop and mobile
 
 ## How to run
@@ -41,19 +42,38 @@ Then open the printed local URL. Click **Start focus** once to unlock audio (bro
 ## Stack
 
 - HTML / CSS / JavaScript (no build step)
+- Vercel Functions + Neon Postgres for accounts / sync
 - SVG · Canvas 2D · Web Audio API
 - Google Fonts: Syne + DM Sans
 
+## Cloud sync
+
+1. Click **Account** → **Create account**
+2. Email + password are stored hashed in Neon
+3. Week plan / sessions sync via `/api/state`
+
+Local:
+
+```bash
+npm install
+npx vercel env pull .env.local
+npm run db:init
+npx vercel dev
+```
+
 ## Project structure
 
-| File         | Role                                      |
-| ------------ | ----------------------------------------- |
-| `index.html` | Shell UI                                  |
-| `styles.css` | Theme, layout, motion                     |
-| `app.js`     | State, radial week, sessions, persistence |
-| `audio.js`   | Ambient mixer graph                       |
-| `viz.js`     | Canvas visualizer loop                    |
+| Path        | Role                                         |
+| ----------- | -------------------------------------------- |
+| `index.html` | Shell UI                                    |
+| `styles.css` | Theme, layout, motion                       |
+| `app.js`     | State, week runway, sessions, account sync  |
+| `audio.js`   | Ambient mixer graph                         |
+| `viz.js`     | Canvas waveform visualizer                  |
+| `motion.js`  | Pointer wash + dust field                   |
+| `api/`       | Auth + state sync (Vercel Functions)        |
+| `scripts/`   | DB init helpers                             |
 
 ## License
 
-MIT — use it in your portfolio or as a starting point for client work.
+MIT

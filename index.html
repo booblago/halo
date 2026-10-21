@@ -6,7 +6,7 @@
     <title>HALO — Deep-work OS</title>
     <meta
       name="description"
-      content="HALO is a quiet deep-work instrument: radial week planning, ambient focus sessions, and EUR capacity projection. Local-only."
+      content="HALO is a quiet deep-work instrument: week runway planning, ambient focus sessions, and EUR capacity projection — with optional cloud account sync."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -17,12 +17,23 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="atmosphere" aria-hidden="true"></div>
+    <div class="world" aria-hidden="true">
+      <div class="world-wash"></div>
+      <div class="world-orb world-orb-a"></div>
+      <div class="world-orb world-orb-b"></div>
+      <div class="world-dust" id="worldDust"></div>
+    </div>
 
     <header class="topbar">
-      <p class="brand">HALO</p>
+      <p class="brand">
+        <span class="brand-mark"></span>
+        HALO
+      </p>
       <div class="topbar-meta">
         <p class="week-label" id="weekLabel">This week</p>
+        <button type="button" class="ghost-btn" id="accountBtn" aria-label="Open account">
+          Account
+        </button>
         <button type="button" class="ghost-btn" id="settingsBtn" aria-label="Open settings">
           Settings
         </button>
@@ -31,34 +42,41 @@
 
     <main class="stage">
       <section class="hero-copy">
-        <h1>Deep work, drawn as a halo.</h1>
+        <h1>Deep work on a week runway.</h1>
         <p>
-          Block the week in arcs. Drop into a focus session with atmosphere.
-          See capacity become euros — privately, in your browser.
+          Stack focus hours by day. Drop into a session with atmosphere.
+          Watch capacity become euros — sync to your account when you want.
         </p>
       </section>
 
       <section class="composition" aria-label="HALO workspace">
-        <div class="radial-panel">
-          <div class="radial-frame">
-            <svg
-              id="radialSvg"
-              class="radial-svg"
-              viewBox="0 0 420 420"
-              role="img"
-              aria-label="Radial week planner"
-            ></svg>
-            <div class="radial-core">
+        <div class="plan-panel">
+          <div class="signal-row">
+            <div class="signal-stat">
               <p class="core-kicker">Utilization</p>
               <p class="core-value" id="utilValue">0%</p>
               <p class="core-sub" id="utilSub">0 of 0 h deep</p>
+            </div>
+            <div class="signal-stat money">
+              <p class="core-kicker">Projected</p>
               <p class="core-money" id="eurValue">€0</p>
-              <p class="core-money-label">projected this week</p>
+              <p class="core-money-label">this week</p>
             </div>
           </div>
-          <div class="day-legend" id="dayLegend" aria-hidden="true"></div>
+
+          <div class="signal-meter" aria-hidden="true">
+            <div class="signal-fill" id="utilFill"></div>
+          </div>
+
+          <div
+            class="week-runway"
+            id="weekRunway"
+            role="list"
+            aria-label="Week runway — click a day to add hours"
+          ></div>
+
           <p class="empty-hint" id="emptyHint" hidden>
-            Block your first deep-work arc — click any day on the ring.
+            Block your first deep-work lane — click any day on the runway.
           </p>
           <ul class="block-list" id="blockList" aria-label="Blocks this week"></ul>
         </div>
@@ -69,7 +87,9 @@
             <p class="studio-note">Ambient layers · session timer · live field</p>
           </div>
 
-          <canvas id="vizCanvas" class="viz" width="640" height="280" aria-hidden="true"></canvas>
+          <div class="viz-shell">
+            <canvas id="vizCanvas" class="viz" width="640" height="280" aria-hidden="true"></canvas>
+          </div>
 
           <div class="timer-row">
             <p class="timer-display" id="timerDisplay">25:00</p>
@@ -123,7 +143,7 @@
 
     <div class="modal" id="blockModal" hidden>
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-        <h2 id="modalTitle">Deep-work arc</h2>
+        <h2 id="modalTitle">Deep-work block</h2>
         <form id="blockForm" class="modal-form">
           <input type="hidden" id="blockId" />
           <label class="field">
@@ -149,7 +169,7 @@
             <button type="button" class="danger-btn" id="deleteBlockBtn" hidden>Delete</button>
             <div class="modal-actions-right">
               <button type="button" class="ghost-btn" id="cancelBlockBtn">Cancel</button>
-              <button type="submit" class="primary-btn">Save arc</button>
+              <button type="submit" class="primary-btn">Save block</button>
             </div>
           </div>
         </form>
@@ -183,10 +203,85 @@
       </div>
     </div>
 
+    <div class="modal" id="accountModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+        <h2 id="accountTitle">Account</h2>
+
+        <div id="accountSignedIn" class="account-panel" hidden>
+          <p class="account-status">
+            Signed in as <strong id="accountEmail"></strong>
+          </p>
+          <p class="account-note" id="accountSyncNote">Cloud sync is on — week data saves to Postgres.</p>
+          <div class="modal-actions">
+            <button type="button" class="ghost-btn" id="syncNowBtn">Sync now</button>
+            <div class="modal-actions-right">
+              <button type="button" class="ghost-btn" id="closeAccountBtn">Close</button>
+              <button type="button" class="danger-btn" id="logoutBtn">Sign out</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="accountSignedOut" class="account-panel">
+          <div class="account-tabs" role="tablist">
+            <button type="button" class="chip active" id="tabLogin" role="tab" aria-selected="true">
+              Sign in
+            </button>
+            <button type="button" class="chip" id="tabRegister" role="tab" aria-selected="false">
+              Create account
+            </button>
+          </div>
+
+          <form id="loginForm" class="modal-form">
+            <label class="field">
+              <span>Email</span>
+              <input type="email" id="loginEmail" required autocomplete="email" />
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input type="password" id="loginPassword" required minlength="6" autocomplete="current-password" />
+            </label>
+            <p class="account-error" id="loginError" hidden></p>
+            <div class="modal-actions">
+              <span></span>
+              <div class="modal-actions-right">
+                <button type="button" class="ghost-btn" id="cancelLoginBtn">Cancel</button>
+                <button type="submit" class="primary-btn">Sign in</button>
+              </div>
+            </div>
+          </form>
+
+          <form id="registerForm" class="modal-form" hidden>
+            <label class="field">
+              <span>Display name</span>
+              <input type="text" id="registerName" maxlength="40" autocomplete="name" />
+            </label>
+            <label class="field">
+              <span>Email</span>
+              <input type="email" id="registerEmail" required autocomplete="email" />
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input type="password" id="registerPassword" required minlength="6" autocomplete="new-password" />
+            </label>
+            <p class="account-hint">Creates a Neon Postgres row and syncs this week’s plan.</p>
+            <p class="account-error" id="registerError" hidden></p>
+            <div class="modal-actions">
+              <span></span>
+              <div class="modal-actions-right">
+                <button type="button" class="ghost-btn" id="cancelRegisterBtn">Cancel</button>
+                <button type="submit" class="primary-btn">Create account</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
     <div class="toast" id="toast" hidden role="status"></div>
 
     <script src="audio.js"></script>
     <script src="viz.js"></script>
+    <script src="motion.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

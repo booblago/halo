@@ -4,3 +4,12 @@ Thumbs.db
 .idea/
 .vscode/
 node_modules/
+.vercel/
+.env
+.env.*
+!.env.example
+.session_secret.tmp
+.agents/
+skills-lock.json
+.vercel
+.env*

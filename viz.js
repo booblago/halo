@@ -1,5 +1,5 @@
 /**
- * HALO canvas field — rings driven by mixer energy.
+ * HALO canvas field — flat waveform + pulse bars (2D).
  */
 const HaloViz = (() => {
   let canvas = null;
@@ -12,7 +12,7 @@ const HaloViz = (() => {
     canvas = el;
     ctx = canvas.getContext("2d");
     resize();
-    drawIdle();
+    startIdle();
   }
 
   function resize() {
@@ -27,96 +27,94 @@ const HaloViz = (() => {
     }
   }
 
-  function drawIdle() {
+  function drawScene(intensity = 0.2) {
     if (!ctx || !canvas) return;
     const { width: w, height: h } = canvas;
-    ctx.clearRect(0, 0, w, h);
-    const cx = w / 2;
-    const cy = h / 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, Math.min(w, h) * 0.18, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(31, 111, 120, 0.35)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cy, Math.min(w, h) * 0.28, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(184, 115, 51, 0.22)";
-    ctx.stroke();
-  }
-
-  function frame() {
-    if (!active || !ctx) return;
-    resize();
-    const { width: w, height: h } = canvas;
-    const cx = w / 2;
-    const cy = h / 2;
-    const energy = typeof HaloAudio !== "undefined" ? HaloAudio.getLevel() : 0.1;
-    phase += 0.02 + energy * 0.08;
-
+    phase += 0.035 + intensity * 0.06;
     ctx.clearRect(0, 0, w, h);
 
-    const analyser = HaloAudio.getAnalyser && HaloAudio.getAnalyser();
+    const analyser = active && HaloAudio.getAnalyser ? HaloAudio.getAnalyser() : null;
     let bins = null;
     if (analyser) {
       bins = new Uint8Array(analyser.frequencyBinCount);
       analyser.getByteFrequencyData(bins);
     }
 
-    const base = Math.min(w, h) * 0.12;
-    for (let i = 0; i < 5; i += 1) {
-      const t = (i + 1) / 5;
-      const pulse = bins
-        ? bins[Math.floor(t * (bins.length - 1))] / 255
-        : 0.2 + Math.sin(phase + i) * 0.05;
-      const radius = base + i * (Math.min(w, h) * 0.07) + pulse * Math.min(w, h) * 0.08;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, phase * (0.4 + i * 0.05), phase * (0.4 + i * 0.05) + Math.PI * 1.4);
-      ctx.strokeStyle =
-        i % 2 === 0
-          ? `rgba(120, 210, 214, ${0.25 + pulse * 0.55})`
-          : `rgba(214, 164, 110, ${0.2 + pulse * 0.45})`;
-      ctx.lineWidth = 2 + pulse * 3;
-      ctx.lineCap = "round";
-      ctx.stroke();
-    }
+    // baseline
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, h * 0.55);
+    ctx.lineTo(w, h * 0.55);
+    ctx.stroke();
 
-    if (bins) {
-      const barCount = 36;
-      const step = Math.floor(bins.length / barCount);
-      for (let i = 0; i < barCount; i += 1) {
-        const v = bins[i * step] / 255;
-        const ang = (i / barCount) * Math.PI * 2 - Math.PI / 2;
-        const inner = Math.min(w, h) * 0.08;
-        const outer = inner + v * Math.min(w, h) * 0.16;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(ang) * inner, cy + Math.sin(ang) * inner);
-        ctx.lineTo(cx + Math.cos(ang) * outer, cy + Math.sin(ang) * outer);
-        ctx.strokeStyle = `rgba(238, 246, 247, ${0.25 + v * 0.55})`;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
+    // waveform
+    ctx.beginPath();
+    const steps = 64;
+    for (let i = 0; i <= steps; i += 1) {
+      const x = (i / steps) * w;
+      const sample = bins
+        ? bins[Math.floor((i / steps) * (bins.length - 1))] / 255
+        : 0.2 + Math.sin(phase * 1.6 + i * 0.28) * 0.12;
+      const y = h * 0.55 - sample * h * (0.22 + intensity * 0.25);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     }
+    const grad = ctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0, "rgba(47, 173, 179, 0.15)");
+    grad.addColorStop(0.5, "rgba(180, 245, 248, 0.85)");
+    grad.addColorStop(1, "rgba(192, 122, 54, 0.45)");
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 2.5 * (window.devicePixelRatio || 1) * 0.7;
+    ctx.stroke();
 
-    raf = requestAnimationFrame(frame);
+    // mirrored fill
+    ctx.lineTo(w, h * 0.55);
+    ctx.lineTo(0, h * 0.55);
+    ctx.closePath();
+    const fill = ctx.createLinearGradient(0, h * 0.2, 0, h * 0.55);
+    fill.addColorStop(0, "rgba(47, 173, 179, 0.18)");
+    fill.addColorStop(1, "rgba(47, 173, 179, 0)");
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    // vertical pulse bars
+    const bars = 28;
+    const gap = w / bars;
+    for (let i = 0; i < bars; i += 1) {
+      const v = bins
+        ? bins[Math.floor((i / bars) * (bins.length - 1))] / 255
+        : 0.15 + Math.abs(Math.sin(phase + i * 0.4)) * 0.35;
+      const bh = v * h * 0.35;
+      const x = i * gap + gap * 0.28;
+      const bw = gap * 0.44;
+      ctx.fillStyle = i % 3 === 0 ? `rgba(192,122,54,${0.2 + v * 0.45})` : `rgba(47,173,179,${0.2 + v * 0.5})`;
+      ctx.fillRect(x, h * 0.78 - bh, bw, bh);
+    }
+  }
+
+  function loop() {
+    resize();
+    const energy = active && typeof HaloAudio !== "undefined" ? HaloAudio.getLevel() : 0.18;
+    drawScene(energy);
+    raf = requestAnimationFrame(loop);
+  }
+
+  function startIdle() {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(loop);
   }
 
   function start() {
-    if (active) return;
     active = true;
-    cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(frame);
+    startIdle();
   }
 
   function stop() {
     active = false;
-    cancelAnimationFrame(raf);
-    drawIdle();
   }
 
-  window.addEventListener("resize", () => {
-    resize();
-    if (!active) drawIdle();
-  });
+  window.addEventListener("resize", resize);
 
   return { init, start, stop, resize };
 })();

@@ -29,6 +29,8 @@
   });
 
   let state = load();
+  let currentUser = null;
+  let syncTimer = null;
   let session = {
     running: false,
     paused: false,
@@ -43,8 +45,8 @@
     utilValue: document.getElementById("utilValue"),
     utilSub: document.getElementById("utilSub"),
     eurValue: document.getElementById("eurValue"),
-    radialSvg: document.getElementById("radialSvg"),
-    dayLegend: document.getElementById("dayLegend"),
+    utilFill: document.getElementById("utilFill"),
+    weekRunway: document.getElementById("weekRunway"),
     emptyHint: document.getElementById("emptyHint"),
     blockList: document.getElementById("blockList"),
     heatmap: document.getElementById("heatmap"),
@@ -60,8 +62,11 @@
     vizCanvas: document.getElementById("vizCanvas"),
     blockModal: document.getElementById("blockModal"),
     settingsModal: document.getElementById("settingsModal"),
+    accountModal: document.getElementById("accountModal"),
     blockForm: document.getElementById("blockForm"),
     settingsForm: document.getElementById("settingsForm"),
+    loginForm: document.getElementById("loginForm"),
+    registerForm: document.getElementById("registerForm"),
     blockId: document.getElementById("blockId"),
     blockDay: document.getElementById("blockDay"),
     blockHours: document.getElementById("blockHours"),
@@ -70,27 +75,51 @@
     deleteBlockBtn: document.getElementById("deleteBlockBtn"),
     cancelBlockBtn: document.getElementById("cancelBlockBtn"),
     settingsBtn: document.getElementById("settingsBtn"),
+    accountBtn: document.getElementById("accountBtn"),
     cancelSettingsBtn: document.getElementById("cancelSettingsBtn"),
     settingName: document.getElementById("settingName"),
     settingRate: document.getElementById("settingRate"),
     settingCapacity: document.getElementById("settingCapacity"),
+    accountSignedIn: document.getElementById("accountSignedIn"),
+    accountSignedOut: document.getElementById("accountSignedOut"),
+    accountEmail: document.getElementById("accountEmail"),
+    accountSyncNote: document.getElementById("accountSyncNote"),
+    tabLogin: document.getElementById("tabLogin"),
+    tabRegister: document.getElementById("tabRegister"),
+    loginEmail: document.getElementById("loginEmail"),
+    loginPassword: document.getElementById("loginPassword"),
+    loginError: document.getElementById("loginError"),
+    registerName: document.getElementById("registerName"),
+    registerEmail: document.getElementById("registerEmail"),
+    registerPassword: document.getElementById("registerPassword"),
+    registerError: document.getElementById("registerError"),
+    syncNowBtn: document.getElementById("syncNowBtn"),
+    logoutBtn: document.getElementById("logoutBtn"),
+    closeAccountBtn: document.getElementById("closeAccountBtn"),
+    cancelLoginBtn: document.getElementById("cancelLoginBtn"),
+    cancelRegisterBtn: document.getElementById("cancelRegisterBtn"),
     toast: document.getElementById("toast"),
     presets: [...document.querySelectorAll(".chip[data-minutes]")],
   };
+
+  function normalizeState(raw) {
+    const base = defaultState();
+    if (!raw || typeof raw !== "object") return base;
+    return {
+      ...base,
+      ...raw,
+      settings: { ...base.settings, ...(raw.settings || {}) },
+      mixer: { ...base.mixer, ...(raw.mixer || {}) },
+      blocks: Array.isArray(raw.blocks) ? raw.blocks : [],
+      sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
+    };
+  }
 
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return defaultState();
-      const parsed = JSON.parse(raw);
-      return {
-        ...defaultState(),
-        ...parsed,
-        settings: { ...defaultState().settings, ...(parsed.settings || {}) },
-        mixer: { ...defaultState().mixer, ...(parsed.mixer || {}) },
-        blocks: Array.isArray(parsed.blocks) ? parsed.blocks : [],
-        sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-      };
+      return normalizeState(JSON.parse(raw));
     } catch {
       return defaultState();
     }
@@ -98,7 +127,121 @@
 
   function save(flash = false) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    if (flash) showToast("Saved");
+    if (flash) showToast(currentUser ? "Saved · syncing" : "Saved");
+    queueCloud(flash);
+  }
+
+  function queueCloud(flash) {
+    if (!currentUser) return;
+    if (syncTimer) window.clearTimeout(syncTimer);
+    syncTimer = window.setTimeout(() => {
+      syncToCloud(flash);
+    }, flash ? 80 : 450);
+  }
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+    if (!res.ok) {
+      const err = new Error((data && data.error) || `Request failed (${res.status})`);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  }
+
+  async function syncToCloud(flash = false) {
+    if (!currentUser) return;
+    try {
+      await api("/api/state", {
+        method: "PUT",
+        body: JSON.stringify({ state }),
+      });
+      if (flash) showToast("Synced to cloud");
+      if (els.accountSyncNote) {
+        els.accountSyncNote.textContent = `Last sync ${new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })} · Neon Postgres`;
+      }
+    } catch (err) {
+      console.warn(err);
+      if (flash) showToast("Saved locally · cloud sync failed");
+    }
+  }
+
+  function applyRemoteState(remote) {
+    if (!remote) return;
+    state = normalizeState(remote);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (els.gainDrift) els.gainDrift.value = String(state.mixer.drift ?? 35);
+    if (els.gainRain) els.gainRain.value = String(state.mixer.rain ?? 20);
+    if (els.gainRoom) els.gainRoom.value = String(state.mixer.room ?? 25);
+    applyMixerGains();
+    renderAll();
+  }
+
+  function setAccountMode(mode) {
+    const login = mode === "login";
+    els.tabLogin.classList.toggle("active", login);
+    els.tabRegister.classList.toggle("active", !login);
+    els.tabLogin.setAttribute("aria-selected", login ? "true" : "false");
+    els.tabRegister.setAttribute("aria-selected", login ? "false" : "true");
+    els.loginForm.hidden = !login;
+    els.registerForm.hidden = login;
+    els.loginError.hidden = true;
+    els.registerError.hidden = true;
+  }
+
+  function renderAccountUi() {
+    const signedIn = Boolean(currentUser);
+    els.accountSignedIn.hidden = !signedIn;
+    els.accountSignedOut.hidden = signedIn;
+    els.accountBtn.textContent = signedIn
+      ? currentUser.name || currentUser.email.split("@")[0]
+      : "Account";
+    if (signedIn) {
+      els.accountEmail.textContent = currentUser.email;
+      els.accountSyncNote.textContent = "Cloud sync is on — week data saves to Postgres.";
+    }
+  }
+
+  function openAccount() {
+    renderAccountUi();
+    if (!currentUser) setAccountMode("login");
+    els.accountModal.hidden = false;
+  }
+
+  function closeAccount() {
+    els.accountModal.hidden = true;
+  }
+
+  async function refreshSession() {
+    try {
+      const data = await api("/api/auth/me");
+      currentUser = data.user || null;
+      if (currentUser && data.state) {
+        applyRemoteState(data.state);
+      }
+      renderAccountUi();
+    } catch (err) {
+      console.warn(err);
+      currentUser = null;
+      renderAccountUi();
+    }
   }
 
   function showToast(message) {
@@ -159,131 +302,46 @@
     return map;
   }
 
-  function polar(cx, cy, r, angle) {
-    return {
-      x: cx + r * Math.cos(angle),
-      y: cy + r * Math.sin(angle),
-    };
-  }
-
-  function describeArc(cx, cy, r, startAngle, endAngle) {
-    const start = polar(cx, cy, r, endAngle);
-    const end = polar(cx, cy, r, startAngle);
-    const large = endAngle - startAngle <= Math.PI ? 0 : 1;
-    return `M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 0 ${end.x} ${end.y}`;
-  }
-
-  function renderRadial() {
-    const svg = els.radialSvg;
-    const cx = 210;
-    const cy = 210;
-    const radius = 148;
-    const trackWidth = 22;
-    const gap = 0.09;
-    const slice = (Math.PI * 2) / 7;
+  function renderWeekRunway() {
     const byDay = hoursByDay();
     const dayCap = Math.max(1, state.settings.weeklyCapacity / 5);
+    const today = (new Date().getDay() + 6) % 7;
 
-    svg.innerHTML = "";
+    els.weekRunway.innerHTML = byDay
+      .map((day, i) => {
+        const ratio = Math.min(1, day.total / dayCap);
+        const height = `${Math.max(day.total > 0 ? 8 : 0, ratio * 100)}%`;
+        const kind =
+          day.deep > 0 && day.admin > 0 ? "mixed" : day.admin > day.deep ? "admin" : "deep";
+        return `
+          <button type="button" class="day-lane${i === today ? " is-today" : ""}" data-day="${i}" role="listitem" style="animation-delay:${i * 45}ms">
+            <span class="day-lane-name">${DAY_NAMES[i]}</span>
+            <span class="day-lane-track">
+              <span class="day-lane-fill ${kind}" style="height:${height}; animation-delay:${i * 55}ms"></span>
+            </span>
+            <span class="day-lane-hours">${day.total ? `${formatHours(day.total)}h` : "—"}</span>
+          </button>`;
+      })
+      .join("");
 
-    const utilRing = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    utilRing.setAttribute("cx", cx);
-    utilRing.setAttribute("cy", cy);
-    utilRing.setAttribute("r", "96");
-    utilRing.setAttribute("fill", "none");
-    utilRing.setAttribute("stroke", "rgba(20,32,40,0.08)");
-    utilRing.setAttribute("stroke-width", "8");
-    svg.appendChild(utilRing);
-
-    const util = Math.min(1, deepHours() / Math.max(1, state.settings.weeklyCapacity));
-    const utilArc = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    const utilStart = -Math.PI / 2;
-    const utilEnd = utilStart + util * Math.PI * 2;
-    utilArc.setAttribute("d", describeArc(cx, cy, 96, utilStart, Math.max(utilStart + 0.001, utilEnd)));
-    utilArc.setAttribute("fill", "none");
-    utilArc.setAttribute("stroke", "#1f6f78");
-    utilArc.setAttribute("stroke-width", "8");
-    utilArc.setAttribute("stroke-linecap", "round");
-    utilArc.style.opacity = util > 0 ? "1" : "0";
-    svg.appendChild(utilArc);
-
-    byDay.forEach((day, i) => {
-      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      group.classList.add("day-group");
-      group.dataset.day = String(i);
-
-      const startAngle = -Math.PI / 2 + i * slice + gap / 2;
-      const endAngle = -Math.PI / 2 + (i + 1) * slice - gap / 2;
-      const mid = (startAngle + endAngle) / 2;
-
-      const hit = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      const outer = polar(cx, cy, radius + trackWidth, startAngle);
-      const outer2 = polar(cx, cy, radius + trackWidth, endAngle);
-      const inner = polar(cx, cy, radius - trackWidth, endAngle);
-      const inner2 = polar(cx, cy, radius - trackWidth, startAngle);
-      const large = endAngle - startAngle > Math.PI ? 1 : 0;
-      hit.setAttribute(
-        "d",
-        [
-          `M ${outer.x} ${outer.y}`,
-          `A ${radius + trackWidth} ${radius + trackWidth} 0 ${large} 1 ${outer2.x} ${outer2.y}`,
-          `L ${inner.x} ${inner.y}`,
-          `A ${radius - trackWidth} ${radius - trackWidth} 0 ${large} 0 ${inner2.x} ${inner2.y}`,
-          "Z",
-        ].join(" ")
-      );
-      hit.classList.add("day-hit");
-      hit.addEventListener("click", () => openBlockModal({ day: i }));
-
-      const track = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      track.setAttribute("d", describeArc(cx, cy, radius, startAngle, endAngle));
-      track.classList.add("day-track");
-      track.setAttribute("stroke-width", String(trackWidth));
-
-      const fillRatio = Math.min(1, day.total / dayCap);
-      const fillEnd = startAngle + (endAngle - startAngle) * Math.max(fillRatio, fillRatio > 0 ? 0.04 : 0);
-      const arc = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      arc.setAttribute("d", describeArc(cx, cy, radius, startAngle, fillEnd));
-      arc.classList.add("day-arc", day.admin > day.deep ? "admin" : "deep");
-      arc.setAttribute("stroke-width", String(trackWidth - 4));
-      arc.style.opacity = day.total > 0 ? "1" : "0";
-      arc.style.animationDelay = `${i * 40}ms`;
-
-      const labelPos = polar(cx, cy, radius + 42, mid);
-      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      label.setAttribute("x", labelPos.x);
-      label.setAttribute("y", labelPos.y);
-      label.setAttribute("text-anchor", "middle");
-      label.setAttribute("dominant-baseline", "middle");
-      label.classList.add("day-label");
-      label.textContent = DAY_NAMES[i];
-
-      group.append(hit, track, arc, label);
-      svg.appendChild(group);
+    els.weekRunway.querySelectorAll(".day-lane").forEach((btn) => {
+      btn.addEventListener("click", () => openBlockModal({ day: Number(btn.dataset.day) }));
     });
   }
 
   function renderCore() {
     const deep = deepHours();
     const cap = state.settings.weeklyCapacity;
-    const util = Math.round((deep / Math.max(1, cap)) * 100);
+    const util = Math.min(100, Math.round((deep / Math.max(1, cap)) * 100));
     els.utilValue.textContent = `${util}%`;
     els.utilSub.textContent = `${formatHours(deep)} of ${formatHours(cap)} h deep`;
     els.eurValue.textContent = eur.format(billableHours() * state.settings.hourlyRate);
+    if (els.utilFill) els.utilFill.style.width = `${util}%`;
   }
 
   function formatHours(h) {
     const n = Number(h) || 0;
     return Number.isInteger(n) ? String(n) : n.toFixed(1);
-  }
-
-  function renderLegend() {
-    els.dayLegend.innerHTML = DAY_NAMES.map(
-      (name, i) => `<button type="button" class="day-pill" data-day="${i}">${name}</button>`
-    ).join("");
-    els.dayLegend.querySelectorAll(".day-pill").forEach((btn) => {
-      btn.addEventListener("click", () => openBlockModal({ day: Number(btn.dataset.day) }));
-    });
   }
 
   function renderBlocks() {
@@ -336,10 +394,10 @@
     const monthFmt = new Intl.DateTimeFormat("en-GB", { month: "short" });
 
     els.heatmap.innerHTML = weeks
-      .map((w) => {
+      .map((w, idx) => {
         const intensity = w.hours / max;
-        const bg = `rgba(31, 111, 120, ${0.08 + intensity * 0.72})`;
-        return `<div class="heat-cell" style="background:${bg}" title="${w.key}: ${formatHours(w.hours)}h">
+        const bg = `linear-gradient(160deg, rgba(180,245,248,${0.35 + intensity * 0.45}), rgba(26,109,118,${0.2 + intensity * 0.65}))`;
+        return `<div class="heat-cell" style="background:${bg}; animation-delay:${idx * 40}ms" title="${w.key}: ${formatHours(w.hours)}h">
           <strong>${formatHours(w.hours)}</strong>
           <span>${monthFmt.format(w.date)} ${w.date.getDate()}</span>
         </div>`;
@@ -363,7 +421,7 @@
     els.blockLabel.value = block.label || "";
     els.blockType.value = block.type || "deep";
     els.deleteBlockBtn.hidden = !editing;
-    document.getElementById("modalTitle").textContent = editing ? "Edit arc" : "Deep-work arc";
+    document.getElementById("modalTitle").textContent = editing ? "Edit block" : "Deep-work block";
     els.blockModal.hidden = false;
     els.blockLabel.focus();
   }
@@ -385,7 +443,7 @@
 
   function renderAll() {
     formatWeekLabel();
-    renderRadial();
+    renderWeekRunway();
     renderCore();
     renderBlocks();
     renderHeatmap();
@@ -509,8 +567,14 @@
 
   function bindEvents() {
     els.settingsBtn.addEventListener("click", openSettings);
+    els.accountBtn.addEventListener("click", openAccount);
     els.cancelSettingsBtn.addEventListener("click", closeSettings);
     els.cancelBlockBtn.addEventListener("click", closeBlockModal);
+    els.closeAccountBtn.addEventListener("click", closeAccount);
+    els.cancelLoginBtn.addEventListener("click", closeAccount);
+    els.cancelRegisterBtn.addEventListener("click", closeAccount);
+    els.tabLogin.addEventListener("click", () => setAccountMode("login"));
+    els.tabRegister.addEventListener("click", () => setAccountMode("register"));
 
     els.settingsForm.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -520,6 +584,71 @@
       save(true);
       closeSettings();
       renderAll();
+    });
+
+    els.loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      els.loginError.hidden = true;
+      try {
+        const data = await api("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            email: els.loginEmail.value,
+            password: els.loginPassword.value,
+          }),
+        });
+        currentUser = data.user;
+        if (data.state) applyRemoteState(data.state);
+        else await syncToCloud(false);
+        renderAccountUi();
+        closeAccount();
+        showToast("Signed in");
+        els.loginPassword.value = "";
+      } catch (err) {
+        els.loginError.textContent = err.message || "Sign in failed";
+        els.loginError.hidden = false;
+      }
+    });
+
+    els.registerForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      els.registerError.hidden = true;
+      try {
+        const data = await api("/api/auth/register", {
+          method: "POST",
+          body: JSON.stringify({
+            name: els.registerName.value.trim(),
+            email: els.registerEmail.value,
+            password: els.registerPassword.value,
+            state,
+          }),
+        });
+        currentUser = data.user;
+        if (data.user?.name && !state.settings.name) {
+          state.settings.name = data.user.name;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        }
+        renderAccountUi();
+        closeAccount();
+        showToast("Account created · synced");
+        els.registerPassword.value = "";
+      } catch (err) {
+        els.registerError.textContent = err.message || "Could not create account";
+        els.registerError.hidden = false;
+      }
+    });
+
+    els.syncNowBtn.addEventListener("click", () => syncToCloud(true));
+    els.logoutBtn.addEventListener("click", async () => {
+      try {
+        await api("/api/auth/logout", { method: "POST", body: "{}" });
+      } catch (err) {
+        console.warn(err);
+      }
+      currentUser = null;
+      renderAccountUi();
+      closeAccount();
+      showToast("Signed out");
     });
 
     els.blockForm.addEventListener("submit", (e) => {
@@ -551,7 +680,7 @@
       renderAll();
     });
 
-    [els.blockModal, els.settingsModal].forEach((modal) => {
+    [els.blockModal, els.settingsModal, els.accountModal].forEach((modal) => {
       modal.addEventListener("click", (e) => {
         if (e.target === modal) {
           modal.hidden = true;
@@ -563,6 +692,7 @@
       if (e.key === "Escape") {
         closeBlockModal();
         closeSettings();
+        closeAccount();
       }
     });
 
@@ -635,7 +765,7 @@
     save(false);
   }
 
-  function init() {
+  async function init() {
     seedDemoIfEmpty();
     fillDaySelects();
     bindEvents();
@@ -643,6 +773,8 @@
     applyMixerGains();
     renderAll();
     syncTimerUi();
+    renderAccountUi();
+    await refreshSession();
   }
 
   init();
